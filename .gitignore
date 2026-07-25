@@ -1,0 +1,32 @@
+# Sorties de compilation. Elles sont regenerables par « dotnet build » et
+# « publish.cmd » : les versionner alourdirait le depot de plusieurs centaines
+# de Mo (dont l'exe autonome de ~68 Mo) sans aucun benefice.
+bin/
+obj/
+dist/
+
+# Fichiers utilisateur Visual Studio / Rider / VS Code
+.vs/
+.idea/
+*.user
+*.suo
+*.userprefs
+*.DotSettings.user
+launchSettings.json
+
+# Resultats de publication et paquets
+*.nupkg
+*.snupkg
+publish/
+
+# Traces et vidages
+*.log
+*.etl
+*.dmp
+
+# Fichiers temporaires du systeme
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*~
+*.tmp

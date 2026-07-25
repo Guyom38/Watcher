@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Watcher</AssemblyName>
+    <RootNamespace>Watcher</RootNamespace>
+    <Version>1.0.0</Version>
+    <Product>Watcher</Product>
+    <Company>Watcher</Company>
+    <AssemblyTitle>Watcher - Surveillance d'accès disque</AssemblyTitle>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <!--
+    Options de publication uniquement. RuntimeIdentifier, SelfContained et
+    PublishSingleFile ne doivent PAS etre declares sans condition : ils s'appliqueraient
+    aussi a « dotnet build », qui deplacerait sa sortie vers bin\<config>\<tfm>\<rid>\ en
+    laissant un executable perime a l'ancien emplacement. Utilisez publish.cmd, qui passe
+    le RID en ligne de commande.
+  -->
+  <PropertyGroup>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- Le rognage casse WPF (resolution de types par reflexion dans le BAML). -->
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WinForms n'est utilise que pour le NotifyIcon et le selecteur de dossier.
+         Ses usings implicites entrent en conflit avec WPF (Application, Brush,
+         Color, KeyEventArgs...) : on les retire et on passe par des alias explicites. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.1.16" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+
+</Project>

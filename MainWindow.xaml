@@ -1,0 +1,1120 @@
+<Window x:Class="Watcher.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:ctl="clr-namespace:Watcher.Controls"
+        xmlns:core="clr-namespace:Watcher.Core"
+        xmlns:local="clr-namespace:Watcher"
+        Title="Watcher — surveillance d'acces disque"
+        Height="820" Width="1320" MinHeight="600" MinWidth="1020"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        Background="#FF060C18"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Ideal">
+
+    <shell:WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="6"
+                      GlassFrameThickness="0" CornerRadius="0"
+                      UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <local:BoolToVisibilityConverter x:Key="BoolVis" />
+        <local:BoolToVisibilityConverter x:Key="NotBoolVis" Invert="True" />
+        <local:ActionToBrushConverter x:Key="ActionBrush" />
+        <local:LogLevelToBrushConverter x:Key="LevelBrush" />
+        <local:CompactNumberConverter x:Key="Compact" />
+
+        <!-- Vignette de statistique -->
+        <Style x:Key="Stat.Value" TargetType="TextBlock" BasedOn="{StaticResource T.Base}">
+            <Setter Property="FontSize" Value="27" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <!-- Etoile des lignes relevant d'une cible epinglee -->
+        <Style x:Key="Cell.Star" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource B.Warn}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!--
+            Colonnes etroites (pastille, etoile) : le style general des cellules impose
+            10 px de marge de chaque cote, ce qui ne laisse que 6 px sur une colonne de
+            26 px et tronque le glyphe. Ces styles annulent la marge et centrent.
+        -->
+        <Style x:Key="Cell.Compact" TargetType="DataGridCell"
+               BasedOn="{StaticResource {x:Type DataGridCell}}">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="Header.Compact" TargetType="DataGridColumnHeader"
+               BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+        </Style>
+
+        <!--
+            Mise en surbrillance des lignes surveillees : fond ambre et liseré a gauche.
+            Les declencheurs de survol et de selection sont redeclares APRES le
+            declencheur de surbrillance : dans un style derive ils l'emporteraient
+            sinon sur ceux du style de base, et la selection deviendrait invisible.
+            Le liseré n'est jamais ecrase, il reste donc visible dans tous les etats.
+        -->
+        <Style x:Key="Row.Activity" TargetType="DataGridRow"
+               BasedOn="{StaticResource {x:Type DataGridRow}}">
+            <Setter Property="ToolTip" Value="{Binding Path}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsTargeted}" Value="True">
+                    <Setter Property="Background" Value="#26FBBF24" />
+                    <Setter Property="BorderBrush" Value="{StaticResource B.Warn}" />
+                    <Setter Property="BorderThickness" Value="3,0,0,0" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#4024406F" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#5938BDF8" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Noeud de l'arborescence des disques -->
+        <HierarchicalDataTemplate DataType="{x:Type core:PathNode}" ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal"
+                        Visibility="{Binding IsPlaceholder, Converter={StaticResource NotBoolVis}}">
+                <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                          IsThreeState="False"
+                          Content="{Binding Display}"
+                          ToolTip="{Binding FullPath}" />
+                <TextBlock Text="{Binding Detail}" Style="{StaticResource T.Label}"
+                           Margin="8,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+        </HierarchicalDataTemplate>
+    </Window.Resources>
+
+    <Grid>
+        <!-- Fond anime : vagues lentes, sous tout le reste -->
+        <ctl:WaveBackground x:Name="Waves" />
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="40" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- ==================== Barre de titre ==================== -->
+            <Grid Grid.Row="0" Background="#26000000" MouseLeftButtonDown="TitleBar_Drag">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="14,0,0,0"
+                            VerticalAlignment="Center">
+                    <Path Width="17" Height="14" Stretch="Uniform" Fill="{StaticResource B.Accent}"
+                          Data="M0,10 C3,2 6,18 9,10 C12,2 15,18 18,10" StrokeThickness="0"
+                          Opacity="0.9" />
+                    <TextBlock Text="WATCHER" FontSize="11.5" FontWeight="Bold"
+                               Margin="9,0,0,0" VerticalAlignment="Center"
+                               Foreground="{StaticResource B.Text}" />
+                    <TextBlock x:Name="ElevationBadge" Text="ADMIN" FontSize="9" FontWeight="Bold"
+                               Margin="9,1,0,0" Padding="5,2" VerticalAlignment="Center"
+                               Foreground="#FF04101F" Background="{StaticResource B.Good}" />
+                </StackPanel>
+
+                <TextBlock Grid.Column="1" x:Name="TitleStatus"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Style="{StaticResource T.Muted}" Text="Surveillance arretee" />
+
+                <!-- Glyphes dessines en vectoriel : ne dependent d'aucune police d'icones. -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button Style="{StaticResource Btn.Chrome}" Click="Minimize_Click"
+                            ToolTip="Reduire">
+                        <Rectangle Width="10" Height="1" Fill="{Binding Foreground,
+                                   RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </Button>
+                    <Button x:Name="MaxButton" Style="{StaticResource Btn.Chrome}"
+                            Click="Maximize_Click" ToolTip="Agrandir">
+                        <Rectangle x:Name="MaxGlyph" Width="9" Height="9" StrokeThickness="1"
+                                   Stroke="{Binding Foreground,
+                                   RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </Button>
+                    <Button Style="{StaticResource Btn.Close}" Click="Hide_Click"
+                            ToolTip="Replier dans la zone de notification">
+                        <Path Data="M 0,0 L 9,9 M 9,0 L 0,9" StrokeThickness="1.1"
+                              Stroke="{Binding Foreground,
+                              RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- ==================== Corps ==================== -->
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="228" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Navigation -->
+                <Border Grid.Column="0" Background="#4004080F"
+                        BorderBrush="{StaticResource B.Border}" BorderThickness="0,0,1,0">
+                    <Grid Margin="12,16,12,14">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0">
+                            <RadioButton x:Name="NavDashboard" Style="{StaticResource NavItem}"
+                                         Content="Tableau de bord" IsChecked="True"
+                                         Checked="Nav_Checked" Tag="0" />
+                            <RadioButton x:Name="NavActivity" Style="{StaticResource NavItem}"
+                                         Content="Activite des fichiers"
+                                         Checked="Nav_Checked" Tag="1" />
+                            <RadioButton x:Name="NavTargets" Style="{StaticResource NavItem}"
+                                         Content="Surveillance ciblee"
+                                         Checked="Nav_Checked" Tag="2" />
+                            <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}"
+                                         Content="Parametres"
+                                         Checked="Nav_Checked" Tag="3" />
+                            <RadioButton x:Name="NavLogs" Style="{StaticResource NavItem}"
+                                         Content="Journal"
+                                         Checked="Nav_Checked" Tag="4" />
+                        </StackPanel>
+
+                        <!-- Interrupteur principal -->
+                        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="14,13">
+                            <StackPanel>
+                                <TextBlock Text="SURVEILLANCE" Style="{StaticResource T.Label}" />
+                                <Grid Margin="0,9,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="ToggleLabel" Grid.Column="0" Text="Inactive"
+                                               VerticalAlignment="Center" FontWeight="SemiBold" />
+                                    <ToggleButton x:Name="MonitorSwitch" Grid.Column="1"
+                                                  Style="{StaticResource Switch}"
+                                                  Click="MonitorSwitch_Click" />
+                                </Grid>
+                                <TextBlock x:Name="EngineLabel" Style="{StaticResource T.Muted}"
+                                           TextWrapping="Wrap" Margin="0,10,0,0"
+                                           Text="Moteur : aucun" />
+
+                                <Button x:Name="ElevateButton" Style="{StaticResource Btn}"
+                                        Margin="0,12,0,0" HorizontalAlignment="Stretch"
+                                        Padding="8,8" Click="Elevate_Click"
+                                        Content="Mode administrateur"
+                                        ToolTip="Relance Watcher en administrateur : necessaire pour voir les lectures et le processus responsable de chaque acces" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <!-- Pages -->
+                <TabControl x:Name="Pages" Grid.Column="1" Background="Transparent"
+                            BorderThickness="0" Padding="0">
+                    <!-- Onglets sans en-tetes : la navigation se fait par le panneau de gauche.
+                         Le ContentPresenter doit garder le nom PART_SelectedContentHost,
+                         c'est lui que TabControl alimente. -->
+                    <TabControl.Template>
+                        <ControlTemplate TargetType="TabControl">
+                            <ContentPresenter x:Name="PART_SelectedContentHost"
+                                              ContentSource="SelectedContent" />
+                        </ControlTemplate>
+                    </TabControl.Template>
+
+                    <!-- ============ 0 : Tableau de bord ============ -->
+                    <TabItem>
+                        <Grid Margin="24,20,24,20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0">
+                                <TextBlock Text="Tableau de bord" Style="{StaticResource T.H1}" />
+                                <TextBlock x:Name="DashSubtitle" Style="{StaticResource T.Muted}"
+                                           Margin="0,4,0,0"
+                                           Text="Aucune capture en cours." />
+                            </StackPanel>
+
+                            <!-- Vignettes -->
+                            <UniformGrid Grid.Row="1" Rows="1" Columns="4" Margin="0,18,0,0">
+                                <Border Style="{StaticResource Card}" Margin="0,0,7,0">
+                                    <StackPanel>
+                                        <TextBlock Text="ACCES CAPTURES" Style="{StaticResource T.Label}" />
+                                        <TextBlock x:Name="StatEvents" Style="{StaticResource Stat.Value}"
+                                                   Margin="0,6,0,0" Text="0" />
+                                        <TextBlock x:Name="StatRate" Style="{StaticResource T.Muted}"
+                                                   Text="0 /s" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource Card}" Margin="7,0">
+                                    <StackPanel>
+                                        <TextBlock Text="FICHIERS DISTINCTS" Style="{StaticResource T.Label}" />
+                                        <TextBlock x:Name="StatFiles" Style="{StaticResource Stat.Value}"
+                                                   Margin="0,6,0,0" Text="0" />
+                                        <TextBlock x:Name="StatTrim" Style="{StaticResource T.Muted}"
+                                                   Text="plafond 20 000" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource Card}" Margin="7,0">
+                                    <StackPanel>
+                                        <TextBlock Text="PROCESSUS" Style="{StaticResource T.Label}" />
+                                        <TextBlock x:Name="StatProcesses" Style="{StaticResource Stat.Value}"
+                                                   Margin="0,6,0,0" Text="0" />
+                                        <TextBlock x:Name="StatAttribution" Style="{StaticResource T.Muted}"
+                                                   Text="attribution indisponible" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource Card}" Margin="7,0,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="EVENEMENTS ECARTES" Style="{StaticResource T.Label}" />
+                                        <TextBlock x:Name="StatFiltered" Style="{StaticResource Stat.Value}"
+                                                   Margin="0,6,0,0" Text="0" />
+                                        <TextBlock x:Name="StatDropped" Style="{StaticResource T.Muted}"
+                                                   Text="0 perdu(s)" />
+                                    </StackPanel>
+                                </Border>
+                            </UniformGrid>
+
+                            <Grid Grid.Row="2" Margin="0,14,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="320" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Flux en direct -->
+                                <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,7,0"
+                                        Padding="0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+
+                                        <Grid Grid.Row="0" Margin="18,14,14,10">
+                                            <TextBlock Text="Flux en direct" Style="{StaticResource T.H2}"
+                                                       VerticalAlignment="Center" />
+                                            <ToggleButton x:Name="PauseLive" Style="{StaticResource Switch}"
+                                                          HorizontalAlignment="Right"
+                                                          Click="PauseLive_Click"
+                                                          ToolTip="Geler le flux pour lire tranquillement" />
+                                        </Grid>
+
+                                        <DataGrid x:Name="LiveGrid" Grid.Row="1"
+                                                  Style="{StaticResource Grid.Dark}"
+                                                  Margin="8,0,8,8" RowHeight="26"
+                                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                            <DataGrid.Columns>
+                                                <DataGridTemplateColumn Header="" Width="24"
+                                                                        CellStyle="{StaticResource Cell.Compact}">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <Ellipse Width="7" Height="7"
+                                                                     Fill="{Binding Action, Converter={StaticResource ActionBrush}}"
+                                                                     VerticalAlignment="Center"
+                                                                     HorizontalAlignment="Center" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTextColumn Header="Heure" Binding="{Binding Clock}"
+                                                                    Width="66" />
+                                                <DataGridTextColumn Header="Date" Binding="{Binding Date}"
+                                                                    Width="88" />
+                                                <DataGridTextColumn Header="Action" Binding="{Binding Action}"
+                                                                    Width="88" />
+                                                <DataGridTextColumn Header="Fichier" Binding="{Binding FileName}"
+                                                                    Width="185" />
+                                                <DataGridTextColumn Header="Processus"
+                                                                    Binding="{Binding ProcessDisplay}"
+                                                                    Width="118" />
+                                                <DataGridTextColumn Header="Dossier" Binding="{Binding Directory}"
+                                                                    Width="*" MinWidth="120" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Processus les plus actifs -->
+                                <Border Grid.Column="1" Style="{StaticResource Card}" Margin="7,0,0,0"
+                                        Padding="0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+                                        <StackPanel Grid.Row="0" Margin="18,14,14,10">
+                                            <TextBlock Text="Qui accede le plus"
+                                                       Style="{StaticResource T.H2}" />
+                                            <TextBlock x:Name="TopHint" Style="{StaticResource T.Muted}"
+                                                       Margin="0,3,0,0" TextWrapping="Wrap"
+                                                       Text="Requiert le moteur ETW (administrateur)." />
+                                        </StackPanel>
+                                        <ListBox x:Name="TopProcesses" Grid.Row="1"
+                                                 Style="{StaticResource List.Dark}"
+                                                 Margin="10,0,10,10">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" Text="{Binding Name}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Grid.Column="1" Text="{Binding Hits}"
+                                                                   Foreground="{StaticResource B.Accent}"
+                                                                   FontWeight="SemiBold" Margin="10,0,0,0" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </Grid>
+                    </TabItem>
+
+                    <!-- ============ 1 : Activite ============ -->
+                    <TabItem>
+                        <Grid Margin="24,20,24,20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0">
+                                <TextBlock Text="Activite des fichiers" Style="{StaticResource T.H1}" />
+                                <TextBlock x:Name="ActivitySubtitle" Style="{StaticResource T.Muted}"
+                                           Margin="0,4,0,0"
+                                           Text="Un fichier par ligne, avec son nombre d'acces et son dernier accedant." />
+                            </StackPanel>
+
+                            <!-- Barre d'outils -->
+                            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="12,10"
+                                    Margin="0,16,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBox x:Name="SearchBox" Grid.Column="0"
+                                             Style="{StaticResource Input}"
+                                             TextChanged="Filter_Changed"
+                                             ToolTip="Filtre sur le nom, le dossier ou le processus" />
+                                    <TextBlock x:Name="SearchPlaceholder" Grid.Column="0"
+                                               Text="Rechercher un fichier, un dossier, un processus..."
+                                               Style="{StaticResource T.Muted}" Margin="12,0,0,0"
+                                               IsHitTestVisible="False" VerticalAlignment="Center" />
+
+                                    <ComboBox x:Name="DriveFilter" Grid.Column="1" Width="152"
+                                              Margin="8,0,0,0" Style="{StaticResource Combo}"
+                                              SelectionChanged="Filter_Changed" />
+                                    <ComboBox x:Name="ActionFilter" Grid.Column="2" Width="146"
+                                              Margin="8,0,0,0" Style="{StaticResource Combo}"
+                                              SelectionChanged="Filter_Changed" />
+
+                                    <Button Grid.Column="3" Style="{StaticResource Btn.Primary}" Margin="8,0,0,0"
+                                            Content="★ Surveiller le dossier" Click="WatchFolder_Click"
+                                            ToolTip="Epingle le dossier des lignes selectionnees et garantit qu'il entre dans la portee de capture" />
+                                    <Button Grid.Column="4" Style="{StaticResource Btn}" Margin="6,0,0,0"
+                                            Content="Ignorer le dossier" Click="IgnoreFolder_Click"
+                                            ToolTip="Exclut tout le dossier des lignes selectionnees" />
+                                    <Button Grid.Column="5" Style="{StaticResource Btn}" Margin="6,0,0,0"
+                                            Content="CSV" Click="Export_Click"
+                                            ToolTip="Exporter les lignes affichees au format CSV" />
+                                    <Button Grid.Column="6" Style="{StaticResource Btn.Ghost}" Margin="6,0,0,0"
+                                            Content="Vider" Click="ClearActivity_Click"
+                                            ToolTip="Remet a zero le tableau et les compteurs" />
+                                </Grid>
+                            </Border>
+
+                            <!-- Tableau -->
+                            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0" Margin="0,10,0,0">
+                                <DataGrid x:Name="ActivityGrid" Style="{StaticResource Grid.Dark}"
+                                          Margin="8" RowStyle="{StaticResource Row.Activity}"
+                                          SelectionChanged="ActivityGrid_SelectionChanged">
+                                    <!-- Les entrees sont construites a l'ouverture : elles dependent
+                                         de la ligne visee (chaine des dossiers parents, processus). -->
+                                    <DataGrid.ContextMenu>
+                                        <ContextMenu x:Name="ActivityMenu"
+                                                     Opened="ActivityMenu_Opened" />
+                                    </DataGrid.ContextMenu>
+                                    <DataGrid.Columns>
+                                        <DataGridTemplateColumn Header="" Width="24" CanUserSort="False"
+                                                                CellStyle="{StaticResource Cell.Compact}">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Ellipse Width="7" Height="7" VerticalAlignment="Center"
+                                                             HorizontalAlignment="Center"
+                                                             Fill="{Binding LastAction, Converter={StaticResource ActionBrush}}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="★" Binding="{Binding TargetMark}"
+                                                            Width="28"
+                                                            SortMemberPath="IsTargeted"
+                                                            CellStyle="{StaticResource Cell.Compact}"
+                                                            HeaderStyle="{StaticResource Header.Compact}"
+                                                            ElementStyle="{StaticResource Cell.Star}" />
+                                        <DataGridTextColumn Header="Fichier" Binding="{Binding FileName}"
+                                                            Width="198" />
+                                        <DataGridTextColumn Header="Acces" Binding="{Binding Count}"
+                                                            Width="62" />
+                                        <DataGridTextColumn Header="Lect." Binding="{Binding Reads}" Width="54" />
+                                        <DataGridTextColumn Header="Ecr." Binding="{Binding Writes}" Width="54" />
+                                        <DataGridTextColumn Header="Suppr." Binding="{Binding Deletes}" Width="62" />
+                                        <DataGridTextColumn Header="Date" Binding="{Binding LastSeenDate}"
+                                                            Width="92"
+                                                            SortMemberPath="LastSeen" />
+                                        <DataGridTextColumn Header="Heure" Binding="{Binding LastSeenTime}"
+                                                            Width="70"
+                                                            SortMemberPath="LastSeen" />
+                                        <DataGridTextColumn Header="Action" Binding="{Binding LastAction}"
+                                                            Width="92" />
+                                        <DataGridTextColumn Header="Processus" Binding="{Binding ProcessSummary}"
+                                                            Width="150" />
+                                        <DataGridTextColumn Header="PID" Binding="{Binding LastPid}" Width="54" />
+                                        <DataGridTextColumn Header="Dossier" Binding="{Binding Directory}"
+                                                            Width="*" MinWidth="200" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Border>
+
+                            <!-- Inspection de la ligne selectionnee -->
+                            <Border x:Name="DetailPane" Grid.Row="3" Style="{StaticResource Card}"
+                                    Margin="0,10,0,0" Padding="16,13" Visibility="Collapsed">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock x:Name="DetailPath" FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock x:Name="DetailStats" Style="{StaticResource T.Muted}"
+                                                   Margin="0,5,0,0" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="DetailProcesses" Style="{StaticResource T.Muted}"
+                                                   Margin="0,5,0,0" TextWrapping="Wrap"
+                                                   FontFamily="{StaticResource F.Mono}" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Style="{StaticResource Btn.Ghost}"
+                                            Content="Fermer" VerticalAlignment="Top"
+                                            Click="CloseDetail_Click" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </TabItem>
+
+                    <!-- ============ 2 : Surveillance ciblee ============ -->
+                    <TabItem>
+                        <Grid Margin="24,20,24,20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0">
+                                <TextBlock Text="Surveillance ciblee" Style="{StaticResource T.H1}" />
+                                <TextBlock x:Name="TargetsSubtitle" Style="{StaticResource T.Muted}"
+                                           Margin="0,4,0,0" TextWrapping="Wrap"
+                                           Text="Vos dossiers et fichiers epingles. Ajouter une cible garantit qu'elle entre dans la portee de capture." />
+                            </StackPanel>
+
+                            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="12,10"
+                                    Margin="0,16,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Style="{StaticResource Btn.Primary}"
+                                            Content="★ Ajouter un dossier" Click="AddTargetFolder_Click" />
+                                    <Button Style="{StaticResource Btn}" Margin="8,0,0,0"
+                                            Content="Ajouter un fichier" Click="AddTargetFile_Click" />
+                                    <Button Style="{StaticResource Btn}" Margin="8,0,0,0"
+                                            Content="Retirer la cible" Click="RemoveTarget_Click" />
+                                    <Button Style="{StaticResource Btn.Ghost}" Margin="8,0,0,0"
+                                            Content="Tout retirer" Click="ClearTargets_Click" />
+                                    <TextBlock x:Name="TargetsHint" Style="{StaticResource T.Muted}"
+                                               VerticalAlignment="Center" Margin="14,0,0,0"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Border>
+
+                            <Grid Grid.Row="2" Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="360" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Liste des cibles -->
+                                <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0"
+                                        Margin="0,0,7,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Text="Cibles" Style="{StaticResource T.H2}"
+                                                   Margin="18,14,14,10" />
+
+                                        <ListBox x:Name="TargetList" Grid.Row="1"
+                                                 Style="{StaticResource List.Dark}" Margin="10,0,10,10"
+                                                 SelectionChanged="TargetList_SelectionChanged">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Margin="2,3">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="★" FontSize="12"
+                                                                       Foreground="{StaticResource B.Warn}"
+                                                                       VerticalAlignment="Center" />
+                                                            <TextBlock Text="{Binding Name}"
+                                                                       FontWeight="SemiBold" Margin="6,0,0,0"
+                                                                       TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Text="{Binding Kind}"
+                                                                       Style="{StaticResource T.Label}"
+                                                                       Margin="8,1,0,0"
+                                                                       VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                        <TextBlock Text="{Binding Path}"
+                                                                   Style="{StaticResource T.Muted}"
+                                                                   FontSize="11"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   ToolTip="{Binding Path}" />
+                                                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                                            <TextBlock Text="{Binding Accesses}"
+                                                                       Foreground="{StaticResource B.Accent}"
+                                                                       FontWeight="SemiBold" FontSize="11.5" />
+                                                            <TextBlock Text="{Binding Files}"
+                                                                       Style="{StaticResource T.Muted}"
+                                                                       FontSize="11.5" Margin="10,0,0,0" />
+                                                            <TextBlock Text="{Binding LastSeen}"
+                                                                       Style="{StaticResource T.Muted}"
+                                                                       FontSize="11.5" Margin="10,0,0,0" />
+                                                        </StackPanel>
+                                                        <TextBlock Text="{Binding TopProcess}"
+                                                                   Style="{StaticResource T.Muted}"
+                                                                   FontSize="11" Margin="0,2,0,0"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Activite de la cible -->
+                                <Border Grid.Column="1" Style="{StaticResource Card}" Padding="0"
+                                        Margin="7,0,0,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+
+                                        <Grid Grid.Row="0" Margin="18,14,14,10">
+                                            <TextBlock x:Name="TargetActivityTitle"
+                                                       Style="{StaticResource T.H2}"
+                                                       Text="Activite des cibles"
+                                                       VerticalAlignment="Center" />
+                                            <Button HorizontalAlignment="Right"
+                                                    Style="{StaticResource Btn.Ghost}"
+                                                    Content="Exporter CSV" Click="ExportTargets_Click" />
+                                        </Grid>
+
+                                        <DataGrid x:Name="TargetGrid" Grid.Row="1"
+                                                  Style="{StaticResource Grid.Dark}" Margin="8,0,8,8"
+                                                  RowStyle="{StaticResource Row.Activity}">
+                                            <DataGrid.ContextMenu>
+                                                <ContextMenu>
+                                                    <MenuItem Header="Ouvrir l'emplacement"
+                                                              Click="RevealTarget_Click" />
+                                                    <MenuItem Header="Copier le chemin complet"
+                                                              Click="CopyTargetPath_Click" />
+                                                </ContextMenu>
+                                            </DataGrid.ContextMenu>
+                                            <DataGrid.Columns>
+                                                <DataGridTemplateColumn Header="" Width="24" CanUserSort="False"
+                                                                        CellStyle="{StaticResource Cell.Compact}">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <Ellipse Width="7" Height="7"
+                                                                     VerticalAlignment="Center"
+                                                                     HorizontalAlignment="Center"
+                                                                     Fill="{Binding LastAction, Converter={StaticResource ActionBrush}}" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTextColumn Header="Fichier"
+                                                                    Binding="{Binding FileName}" Width="220" />
+                                                <DataGridTextColumn Header="Acces"
+                                                                    Binding="{Binding Count}" Width="62" />
+                                                <DataGridTextColumn Header="Lect."
+                                                                    Binding="{Binding Reads}" Width="54" />
+                                                <DataGridTextColumn Header="Ecr."
+                                                                    Binding="{Binding Writes}" Width="54" />
+                                                <DataGridTextColumn Header="Date"
+                                                                    Binding="{Binding LastSeenDate}" Width="92"
+                                                                    SortMemberPath="LastSeen" />
+                                                <DataGridTextColumn Header="Heure"
+                                                                    Binding="{Binding LastSeenTime}" Width="70"
+                                                                    SortMemberPath="LastSeen" />
+                                                <DataGridTextColumn Header="Processus"
+                                                                    Binding="{Binding ProcessSummary}"
+                                                                    Width="160" />
+                                                <DataGridTextColumn Header="Dossier"
+                                                                    Binding="{Binding Directory}"
+                                                                    Width="*" MinWidth="160" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </Grid>
+                    </TabItem>
+
+                    <!-- ============ 3 : Parametres ============ -->
+                    <TabItem>
+                        <Grid Margin="24,20,10,20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0" Margin="0,0,14,0">
+                                <TextBlock Text="Parametres" Style="{StaticResource T.H1}" />
+                                <TextBlock Style="{StaticResource T.Muted}" Margin="0,4,0,0"
+                                           Text="Les changements ne s'appliquent qu'apres validation." />
+                            </StackPanel>
+
+                            <ScrollViewer Grid.Row="1" Margin="0,16,0,0" VerticalScrollBarVisibility="Auto"
+                                          Padding="0,0,14,0">
+                                <StackPanel>
+
+                                    <!-- Elevation -->
+                                    <Border x:Name="ElevationCard" Style="{StaticResource Card}"
+                                            BorderBrush="{StaticResource B.Warn}" Padding="16,13">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="Moteur limite"
+                                                           Foreground="{StaticResource B.Warn}"
+                                                           FontWeight="SemiBold" />
+                                                <TextBlock Style="{StaticResource T.Muted}" Margin="0,5,0,0"
+                                                           TextWrapping="Wrap"
+                                                           Text="Sans droits administrateur, Watcher n'utilise que FileSystemWatcher : les lectures de fichiers et le processus responsable de chaque acces restent invisibles. Le moteur ETW noyau, qui fournit ces deux informations, exige l'elevation." />
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Style="{StaticResource Btn.Primary}"
+                                                    Content="Relancer en administrateur"
+                                                    VerticalAlignment="Center" Margin="14,0,0,0"
+                                                    Click="Elevate_Click" />
+                                        </Grid>
+                                    </Border>
+
+                                    <!-- Portee -->
+                                    <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                                        <StackPanel>
+                                            <TextBlock Text="Portee de la surveillance"
+                                                       Style="{StaticResource T.H2}" />
+                                            <TextBlock Style="{StaticResource T.Muted}" Margin="0,4,0,0"
+                                                       Text="Choisissez les disques ou les dossiers a suivre." />
+
+                                            <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                                                <RadioButton x:Name="ScopeAll" Content="Tout selectionner"
+                                                             GroupName="Scope"
+                                                             Style="{StaticResource Pill}"
+                                                             Checked="Scope_Changed" />
+                                                <RadioButton x:Name="ScopeNone" Content="Rien"
+                                                             GroupName="Scope" Margin="8,0,0,0"
+                                                             Style="{StaticResource Pill}"
+                                                             Checked="Scope_Changed" />
+                                                <RadioButton x:Name="ScopeSpecific" Content="Selection specifique"
+                                                             GroupName="Scope" Margin="8,0,0,0"
+                                                             Style="{StaticResource Pill}"
+                                                             Checked="Scope_Changed" />
+                                            </StackPanel>
+
+                                            <!-- Disques -->
+                                            <ItemsControl x:Name="DriveSummary" Margin="0,14,0,0">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Background="#4014243D" CornerRadius="8"
+                                                                Padding="12,8" Margin="0,0,8,8"
+                                                                BorderBrush="{StaticResource B.Border}"
+                                                                BorderThickness="1">
+                                                            <StackPanel>
+                                                                <TextBlock Text="{Binding Display}"
+                                                                           FontWeight="SemiBold" FontSize="12" />
+                                                                <TextBlock Text="{Binding Capacity}"
+                                                                           Style="{StaticResource T.Muted}" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+
+                                            <!-- Arborescence -->
+                                            <Grid x:Name="TreeSection" Margin="0,6,0,0">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="300" />
+                                                </Grid.RowDefinitions>
+
+                                                <StackPanel Grid.Row="0" Orientation="Horizontal"
+                                                            Margin="0,0,0,8">
+                                                    <Button Style="{StaticResource Btn}" Content="Tout cocher"
+                                                            Click="TreeCheckAll_Click" />
+                                                    <Button Style="{StaticResource Btn}" Content="Tout decocher"
+                                                            Margin="6,0,0,0" Click="TreeUncheckAll_Click" />
+                                                    <Button Style="{StaticResource Btn.Ghost}"
+                                                            Content="Replier tout" Margin="6,0,0,0"
+                                                            Click="TreeCollapse_Click" />
+                                                    <TextBlock x:Name="TreeHint" Style="{StaticResource T.Muted}"
+                                                               VerticalAlignment="Center" Margin="12,0,0,0"
+                                                               Text="Deployez un disque pour affiner." />
+                                                </StackPanel>
+
+                                                <Border Grid.Row="1" Background="#3308121F" CornerRadius="9"
+                                                        BorderBrush="{StaticResource B.Border}"
+                                                        BorderThickness="1" Padding="8">
+                                                    <TreeView x:Name="DriveTree"
+                                                              Style="{StaticResource Tree.Dark}"
+                                                              ItemContainerStyle="{StaticResource Tree.Item}" />
+                                                </Border>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- Capture -->
+                                    <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                                        <StackPanel>
+                                            <TextBlock Text="Types d'acces captures"
+                                                       Style="{StaticResource T.H2}" />
+                                            <TextBlock Style="{StaticResource T.Muted}" Margin="0,4,0,12"
+                                                       Text="Les lectures ne sont disponibles qu'avec le moteur ETW." />
+                                            <UniformGrid Columns="2" Rows="3">
+                                                <CheckBox x:Name="OptReads" Content="Lectures" Margin="0,5" />
+                                                <CheckBox x:Name="OptWrites" Content="Ecritures et creations"
+                                                          Margin="0,5" />
+                                                <CheckBox x:Name="OptDeletes" Content="Suppressions" Margin="0,5" />
+                                                <CheckBox x:Name="OptRenames" Content="Renommages" Margin="0,5" />
+                                                <CheckBox x:Name="OptAttribution"
+                                                          Content="Attribuer les acces aux processus (ETW)"
+                                                          Margin="0,5" />
+                                                <CheckBox x:Name="OptSkipDirs"
+                                                          Content="Ignorer les chemins sans extension"
+                                                          Margin="0,5" />
+                                            </UniformGrid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- Exclusions -->
+                                    <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="190" />
+                                            </Grid.RowDefinitions>
+
+                                            <StackPanel Grid.Row="0">
+                                                <TextBlock Text="Exclusions" Style="{StaticResource T.H2}" />
+                                                <TextBlock Style="{StaticResource T.Muted}" Margin="0,4,0,0"
+                                                           TextWrapping="Wrap"
+                                                           Text="Un chemin sans joker exclut le fichier ou tout le dossier. Les jokers * et ? s'appliquent au chemin complet, par exemple *\AppData\Local\Temp\* ou *.tmp." />
+                                            </StackPanel>
+
+                                            <Grid Grid.Row="1" Margin="0,12,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBox x:Name="IgnoreInput" Grid.Column="0"
+                                                         Style="{StaticResource Input}"
+                                                         KeyDown="IgnoreInput_KeyDown"
+                                                         ToolTip="Chemin ou motif a exclure" />
+                                                <Button Grid.Column="1" Style="{StaticResource Btn}"
+                                                        Content="Ajouter" Margin="8,0,0,0"
+                                                        Click="AddIgnore_Click" />
+                                                <Button Grid.Column="2" Style="{StaticResource Btn}"
+                                                        Content="Parcourir un dossier" Margin="6,0,0,0"
+                                                        Click="BrowseIgnore_Click" />
+                                                <Button Grid.Column="3" Style="{StaticResource Btn.Ghost}"
+                                                        Content="Valeurs par defaut" Margin="6,0,0,0"
+                                                        Click="ResetIgnore_Click" />
+                                            </Grid>
+
+                                            <Border Grid.Row="2" Background="#3308121F" CornerRadius="9"
+                                                    BorderBrush="{StaticResource B.Border}"
+                                                    BorderThickness="1" Padding="6">
+                                                <ListBox x:Name="IgnoreList" Style="{StaticResource List.Dark}">
+                                                    <ListBox.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Grid.Column="0" Text="{Binding}"
+                                                                           FontFamily="{StaticResource F.Mono}"
+                                                                           FontSize="11.5"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           VerticalAlignment="Center" />
+                                                                <Button Grid.Column="1"
+                                                                        Style="{StaticResource Btn.Ghost}"
+                                                                        Content="Retirer" Padding="8,3"
+                                                                        FontSize="11"
+                                                                        Tag="{Binding}"
+                                                                        Click="RemoveIgnore_Click" />
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ListBox.ItemTemplate>
+                                                </ListBox>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+
+                                    <!-- Processus ignores -->
+                                    <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="150" />
+                                            </Grid.RowDefinitions>
+
+                                            <StackPanel Grid.Row="0">
+                                                <TextBlock Text="Processus ignores"
+                                                           Style="{StaticResource T.H2}" />
+                                                <TextBlock Style="{StaticResource T.Muted}" Margin="0,4,0,0"
+                                                           TextWrapping="Wrap"
+                                                           Text="Tous les acces de ces processus sont ecartes avant meme l'analyse du chemin : c'est le filtre le plus efficace pour faire taire un service bavard. Necessite le moteur ETW, seul a connaitre l'origine des acces. Ajoutez-en par un clic droit sur une ligne d'activite." />
+                                            </StackPanel>
+
+                                            <Grid Grid.Row="1" Margin="0,12,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBox x:Name="ProcessInput" Grid.Column="0"
+                                                         Style="{StaticResource Input}"
+                                                         KeyDown="ProcessInput_KeyDown"
+                                                         ToolTip="Nom de l'executable, par exemple explorer.exe" />
+                                                <Button Grid.Column="1" Style="{StaticResource Btn}"
+                                                        Content="Ignorer ce processus" Margin="8,0,0,0"
+                                                        Click="AddIgnoredProcess_Click" />
+                                            </Grid>
+
+                                            <Border Grid.Row="2" Background="#3308121F" CornerRadius="9"
+                                                    BorderBrush="{StaticResource B.Border}"
+                                                    BorderThickness="1" Padding="6">
+                                                <ListBox x:Name="IgnoredProcessList"
+                                                         Style="{StaticResource List.Dark}">
+                                                    <ListBox.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Grid.Column="0" Text="{Binding}"
+                                                                           FontFamily="{StaticResource F.Mono}"
+                                                                           FontSize="11.5"
+                                                                           VerticalAlignment="Center" />
+                                                                <Button Grid.Column="1"
+                                                                        Style="{StaticResource Btn.Ghost}"
+                                                                        Content="Retirer" Padding="8,3"
+                                                                        FontSize="11" Tag="{Binding}"
+                                                                        Click="RemoveIgnoredProcessItem_Click" />
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ListBox.ItemTemplate>
+                                                </ListBox>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+
+                                    <!-- Application -->
+                                    <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                                        <StackPanel>
+                                            <TextBlock Text="Application" Style="{StaticResource T.H2}" />
+                                            <UniformGrid Columns="2" Rows="2" Margin="0,12,0,0">
+                                                <CheckBox x:Name="OptStartup"
+                                                          Content="Lancer au demarrage de Windows" Margin="0,5" />
+                                                <CheckBox x:Name="OptStartMinimized"
+                                                          Content="Demarrer dans la zone de notification"
+                                                          Margin="0,5" />
+                                                <CheckBox x:Name="OptLogFile"
+                                                          Content="Ecrire un fichier journal" Margin="0,5" />
+                                                <CheckBox x:Name="OptAnimation"
+                                                          Content="Fond anime" Margin="0,5" />
+                                            </UniformGrid>
+
+                                            <!-- Applique immediatement : c'est un reglage de
+                                                 depannage, il doit se voir tout de suite. -->
+                                            <Border Background="#4014243D" CornerRadius="9"
+                                                    BorderBrush="{StaticResource B.Border}"
+                                                    BorderThickness="1" Padding="12,10"
+                                                    Margin="0,14,0,0">
+                                                <StackPanel>
+                                                    <CheckBox x:Name="OptSoftwareRender"
+                                                              Content="Rendu logiciel (processeur au lieu du GPU)"
+                                                              Click="SoftwareRender_Click" />
+                                                    <TextBlock Style="{StaticResource T.Muted}"
+                                                               Margin="25,6,0,0" TextWrapping="Wrap"
+                                                               Text="A activer si la fenetre s'affiche en noir, typiquement par-dessus un jeu : WPF n'arrive alors plus a allouer sa surface de rendu sur le GPU. Prend effet immediatement, sans redemarrage." />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Grid Margin="0,14,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="110" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="Lignes conservees au maximum"
+                                                           VerticalAlignment="Center" Margin="0,0,12,0" />
+                                                <TextBox x:Name="OptMaxEntries" Grid.Column="1"
+                                                         Style="{StaticResource Input}" />
+                                                <TextBlock Grid.Column="2" Style="{StaticResource T.Muted}"
+                                                           VerticalAlignment="Center" Margin="12,0,0,0"
+                                                           Text="Au-dela, les acces les plus anciens sont retires du tableau." />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Style="{StaticResource Card}" Margin="0,12,0,20">
+                                        <StackPanel>
+                                            <TextBlock Text="Emplacement des donnees"
+                                                       Style="{StaticResource T.H2}" />
+                                            <TextBlock x:Name="DataPathText" Style="{StaticResource T.Muted}"
+                                                       Margin="0,6,0,0" TextWrapping="Wrap"
+                                                       FontFamily="{StaticResource F.Mono}" />
+                                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                                <Button Style="{StaticResource Btn}"
+                                                        Content="Ouvrir le dossier" Click="OpenDataFolder_Click" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </ScrollViewer>
+
+                            <!-- Validation -->
+                            <Border Grid.Row="2" Background="#59060C18" CornerRadius="10" Padding="14,12"
+                                    Margin="0,10,14,0" BorderBrush="{StaticResource B.Border}"
+                                    BorderThickness="1">
+                                <Grid>
+                                    <TextBlock x:Name="SettingsHint" Style="{StaticResource T.Muted}"
+                                               VerticalAlignment="Center"
+                                               Text="Aucune modification en attente." />
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <Button Style="{StaticResource Btn.Ghost}" Content="Annuler"
+                                                Click="RevertSettings_Click" />
+                                        <Button Style="{StaticResource Btn.Primary}" Margin="8,0,0,0"
+                                                Content="Appliquer et enregistrer"
+                                                Click="ApplySettings_Click" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </TabItem>
+
+                    <!-- ============ 4 : Journal ============ -->
+                    <TabItem>
+                        <Grid Margin="24,20,24,20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0">
+                                <TextBlock Text="Journal" Style="{StaticResource T.H1}" />
+                                <TextBlock x:Name="LogSubtitle" Style="{StaticResource T.Muted}"
+                                           Margin="0,4,0,0" />
+                            </StackPanel>
+
+                            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="12,10"
+                                    Margin="0,16,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="LogLevelFilter" Grid.Column="0" Width="180"
+                                              HorizontalAlignment="Left" Style="{StaticResource Combo}"
+                                              SelectionChanged="LogFilter_Changed" />
+                                    <CheckBox x:Name="LogAutoScroll" Grid.Column="1"
+                                              Content="Suivre les nouvelles lignes" IsChecked="True"
+                                              VerticalAlignment="Center" Margin="0,0,12,0" />
+                                    <Button Grid.Column="2" Style="{StaticResource Btn}"
+                                            Content="Ouvrir le fichier" Click="OpenLogFile_Click" />
+                                    <Button Grid.Column="3" Style="{StaticResource Btn.Ghost}" Margin="6,0,0,0"
+                                            Content="Vider l'affichage" Click="ClearLogView_Click" />
+                                </Grid>
+                            </Border>
+
+                            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0" Margin="0,10,0,0">
+                                <ListBox x:Name="LogView" Style="{StaticResource List.Dark}" Margin="8">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="{Binding Stamp}"
+                                                           FontFamily="{StaticResource F.Mono}" FontSize="11.5"
+                                                           Foreground="{StaticResource B.TextFaint}" />
+                                                <Border Grid.Column="1" Margin="10,0" CornerRadius="4"
+                                                        Padding="6,1" VerticalAlignment="Center"
+                                                        Background="{Binding Level, Converter={StaticResource LevelBrush}}">
+                                                    <TextBlock Text="{Binding Level}" FontSize="9.5"
+                                                               FontWeight="Bold" Foreground="#FF04101F" />
+                                                </Border>
+                                                <TextBlock Grid.Column="2" Text="{Binding Message}"
+                                                           FontFamily="{StaticResource F.Mono}" FontSize="11.5"
+                                                           TextWrapping="Wrap" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Border>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>
