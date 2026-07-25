@@ -150,8 +150,8 @@ public partial class MainWindow : Window
         IgnoredProcessList.ItemsSource = _ignoredProcesses;
         TopProcesses.ItemsSource = _topProcesses;
         DriveSummary.ItemsSource = DriveEnumerator.All();
-        DataPathText.Text = AppPaths.Root;
-        LogSubtitle.Text = $"Fichier du jour : {AppLogger.CurrentLogFile}";
+        DataPathText.Text = AppPaths.Abbreviate(AppPaths.Root);
+        LogSubtitle.Text = $"Fichier du jour : {AppPaths.Abbreviate(AppLogger.CurrentLogFile)}";
 
         LoadSettingsIntoUi();
         ApplyElevationState();
@@ -1452,6 +1452,20 @@ public partial class MainWindow : Window
             AppLogger.Warn("Onglet Parametres quitte avec des modifications non appliquees");
 
         Pages.SelectedIndex = index;
+
+        // Rafraichissement immediat a l'arrivee sur un onglet. Sans cela, les compteurs
+        // resteraient ceux du dernier passage du minuteur — jusqu'a deux secondes de
+        // valeurs perimees, et « 0 acces » a la premiere ouverture.
+        switch (index)
+        {
+            case 1:
+                _activityView?.Refresh();
+                break;
+            case 2:
+                RefreshTargetRows();
+                _targetView?.Refresh();
+                break;
+        }
     }
 
     private void TitleBar_Drag(object sender, MouseButtonEventArgs e)

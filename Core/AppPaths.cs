@@ -24,4 +24,22 @@ public static class AppPaths
     /// </summary>
     public static bool IsOwnPath(string path)
         => path.StartsWith(Root, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Remplace le dossier de donnees local par la variable d'environnement
+    /// correspondante. Plus court a lire dans l'interface, et evite d'afficher le nom
+    /// du compte Windows — utile des qu'une capture d'ecran est partagee.
+    /// </summary>
+    public static string Abbreviate(string path)
+    {
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (local.Length > 0 && path.StartsWith(local, StringComparison.OrdinalIgnoreCase))
+            return "%LOCALAPPDATA%" + path.Substring(local.Length);
+
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (profile.Length > 0 && path.StartsWith(profile, StringComparison.OrdinalIgnoreCase))
+            return "%USERPROFILE%" + path.Substring(profile.Length);
+
+        return path;
+    }
 }
